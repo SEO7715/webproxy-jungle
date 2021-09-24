@@ -2,7 +2,6 @@
 
 #include "csapp.h"
 
-void echo(int connfd);
 void doit(int fd);
 void read_requesthdrs(rio_t *rp);
 int parse_uri(char *uri, char *filename, char *cgiargs);
@@ -10,6 +9,7 @@ void serve_static(int fd, char *filename, int filesize);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
+
 
 // main 요약) Open_listenfd 함수를 사용해 listenfd를 생성하고,
 // accept함수를 통해 연결 요청한 clientfd와 연결
@@ -20,7 +20,7 @@ int main(int argc, char **argv) {
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
-    struct sockaddr_storage clientaddr; //클라이언트의 주소 정보를 담고 있는 구조체
+    struct sockaddr_storage clientaddr;
 
     // check command-line args
     if (argc != 2) {
@@ -43,12 +43,11 @@ int main(int argc, char **argv) {
         printf("Accepted connection from (%s, %s)\n", hostname, port);
         // client 에서 받은 요청을 처리하는 doit 함수 진행
         doit(connfd);
-        echo(connfd);
         Close(connfd);
     }
 }
 
-// doit 함수는 1개의 HTTP 트랜잭션 처리f
+// doit 함수는 1개의 HTTP 트랜잭션 처리
 // 즉, 1개의 client 요청을 처리해 client에게 컨텐츠 제공
 // 1. client의 HTTP 요청에서 요청 라인만 읽음 (Rio_readlineb을 통해 요청 텍스트의 제일 위 한줄(요청 라인)을 읽음)
 // 요청 라인 -> GET/ HTTP /1.1 (method, uri, 요청이 준수하는 http 버전)
@@ -67,7 +66,6 @@ void doit(int fd) {
 
     // read request line and headers
     Rio_readinitb(&rio, fd);
-    
     Rio_readlineb(&rio, buf, MAXLINE); //request line, header 읽기
     printf("Request headers:\n");
     printf("%s", buf);
@@ -146,7 +144,7 @@ void read_requesthdrs(rio_t *rp) {
     char buf[MAXLINE];
 
     Rio_readlineb(rp, buf, MAXLINE);
-    while(strcmp(buf, "\r\n")) { //strcmp 문자열 비교 // buf 내 빈 문자열이 있을 때까지
+    while(strcmp(buf, "\r\n")) {
         Rio_readlineb(rp, buf, MAXLINE);
         printf("%s", buf);
     }
@@ -209,40 +207,28 @@ void serve_static(int fd, char *filename, int filesize) {
 
     //Send response body to client
     // O_RDONLY -> 파일을 읽기 전용으로 열기  // O_WRONLY -> 파일을 쓰기 전용으로 열기 // O_RDWR -> O_RDONLY와 O_WRONLY 합치기
-    // 1) mmap version (read(file) + Malloc)
-    // srcfd = Open(filename, O_RDONLY, 0); //파일 열기
-    // srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0); //가상메모리에 매핑
-    // Close(srcfd);
-    // Rio_writen(fd, srcp, filesize); //fd는 클라이언트에 전달용
-    // Munmap(srcp, filesize);
+    srcfd = Open(filename, O_RDONLY, 0);
 
+    // mmap는 요청한 파일을 가상메모리 영역으로 매핑함
     // Mmap(void *start, size_t length, int prot, int flags, int fd, off_t offset)
     // fd로 지정된 파일에서 offset을 시작으로 length 바이트 만큼 start주소로 대응시키도록 함
     // start 주소는 단지 그 주소를 사용했으면 좋겠다는 정도 이므로 보통 0으로 지정
     // mmap는 지정된 영역에 대응된 실제 시작위치를 반환
     // prot 인자는 원하는 메모리 보호모드(:12)를 설정
-    // -> PROT_EXEC - 실행가능, PROT_READ - 읽기 가능, NONE- 접근 불가, WRITE - 쓰기 가능d
+    // -> PROT_EXEC - 실행가능, PROT_READ - 읽기 가능, NONE- 접근 불가, WRITE - 쓰기 가능
     // flags는 대응된 객체의 타입, 대응 옵션, 대응된 페이지 복사본에 대한 수정이 그 프로세스에서만 보일건지, 다른 참조하는 프로세스와 공유할건지 설정
     // MAP_FIXED - 지정한 주소만 사용, 사용 못할 경우 실패
     // MAP_SHARED - 대응된 객체를 다른 모든 프로세스와 공유
     // MAP_PRIVATE - 다른 프로세스와 대응 영역 공유하지 않음
-
+    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    Close(srcfd);
+    Rio_writen(fd, srcp, filesize);
+    // 파일을 client에게 전송 -> 주소 srcp에서 시작하는 filesize 바이트를 클라이언트의 연결 식별자로 복사
+    Munmap(srcp, filesize);
     // int munmap(void *addr, size_t len);
     // munmap 함수는 addr이 가리키는 영역에 len 크기만큼 할당하여 매핑한 메모리를 해제함
     // 매핑된 가상메모리 주소 반환
     // 파일을 메모리에 매핑한 후 더이상 이 식별자는 필요하지 않으므로 이 파일을 닫아줘야함(메모리 누수 방지)
-    // mmap는 요청한 파일을 가상메모리 영역으로 매핑함
-
-    // 2) malloc version
-    srcfd = Open(filename, O_RDONLY, 0); //파일 열기
-    srcp = (char*)malloc(filesize); //mmap 대신 malloc으로 할당한 메모리 반환해주기 //filesize는 byte 이므로
-    Rio_readn(srcfd, srcp, filesize); // srcp는 buf 역할
-    Close(srcfd);
-    Rio_writen(fd, srcp, filesize); //fd는 클라이언트에 전달용
-    // 파일을 client에게 전송 -> 주소 srcp에서 시작하는 filesize 바이트를 클라이언트의 연결 식별자로 복사
-    free(srcp); //할당한 메모리 free처리
-    
-    
 }
 // response header에 들어갈 내용인 클라이언트가 요청한 파일의 타입을 확인
 // get_filetype - Derive file type from filename
@@ -256,8 +242,6 @@ void get_filetype(char *filename, char *filetype)
         strcpy(filetype, "image/png");
     else if (strstr(filename, ".jpg"))
         strcpy(filetype, "image/jpeg");
-    else if (strstr(filename, ".mp4"))
-        strcpy(filetype, "video/mp4"); //비디오 파일 확인
     else
         strcpy(filetype, "text/plain");
 }
@@ -316,16 +300,4 @@ void serve_dynamic(int fd, char *filename, char *cgiargs) {
     
     }
     Wait(NULL); //parent waits for and reaps child 자식프로세스가 종료되어 정리되기 기다림
-}
-
-void echo(int connfd) {
-  size_t n;
-  char buf[MAXLINE];
-  rio_t rio;
-
-  Rio_readinitb(&rio, connfd);
-  while((n = Rio_readlineb(&rio, buf, MAXLINE)) != 0) {
-    printf("server received %d bytes\n", (int)n);
-    Rio_writen(connfd, buf, n);
-  }
 }
