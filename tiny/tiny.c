@@ -10,6 +10,7 @@ void serve_static(int fd, char *filename, int filesize);
 void get_filetype(char *filename, char *filetype);
 void serve_dynamic(int fd, char *filename, char *cgiargs);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
+void serve_head_method(int fd, char *filename, int filesize);
 
 // main 요약) Open_listenfd 함수를 사용해 listenfd를 생성하고,
 // accept함수를 통해 연결 요청한 clientfd와 연결
@@ -48,7 +49,7 @@ int main(int argc, char **argv) {
     }
 }
 
-// doit 함수는 1개의 HTTP 트랜잭션 처리f
+// doit 함수는 1개의 HTTP 트랜잭션 처리
 // 즉, 1개의 client 요청을 처리해 client에게 컨텐츠 제공
 // 1. client의 HTTP 요청에서 요청 라인만 읽음 (Rio_readlineb을 통해 요청 텍스트의 제일 위 한줄(요청 라인)을 읽음)
 // 요청 라인 -> GET/ HTTP /1.1 (method, uri, 요청이 준수하는 http 버전)
@@ -72,10 +73,11 @@ void doit(int fd) {
     printf("Request headers:\n");
     printf("%s", buf);
     //buf에서 공백문자로 구분된 문자열 3개 읽어 각자 method, uri, version에 저장 (method, uri, 요청이 준수하는 http 버전)
-    sscanf(buf, "%s %s %s", method, uri, version); 
+    sscanf(buf, "%s %s %s", method, uri, version);
     
-    //GET요청인지 확인
-    if (strcasecmp(method, "GET")) { //strcasecmp - 대소문자 구분없이 문자열 비교 함수
+    //GET 또는 HEAD 요청 여부 확인
+    if (!(strcasecmp(method, "GET")== 0 || strcasecmp(method, "HEAD")==0)) { //strcasecmp - 대소문자 구분없이 문자열 비교 함수 (모두 같으면 0을 return)
+    // if 0이면 false로 인식해서 해당 조건문으로 들어가지 않음 == method가 get이 아닐 때만 해당 조건문으로 들어옴
         clienterror(fd, method, "501", "Not implemented", "Tiny does not implement this method");
         return;
     }
@@ -94,6 +96,12 @@ void doit(int fd) {
         return;
     } // 해당 filename이 유효한지 확인
     
+    // Serve HEAD method
+    if (!strcasecmp(method, "HEAD")) {
+        serve_head_method(fd, filename, sbuf.st_size);
+        return;
+    }
+
     // 정적 컨텐츠 
     if (is_static) { //serve static content
         // 실행 가능한지 확인하는 조건문 -> 일반 파일인지, 읽기 권한을 갖고 있는지 확인
@@ -110,7 +118,7 @@ void doit(int fd) {
     // S_ISREG -> isregular : 일반 파일인지 확인하는 macro
     // S_IXUSR -> 실행 권한이 있는지
     else { //serve dynamic content
-        if (!(S_ISREG(sbuf.st_mode)) || ! (S_IXUSR & sbuf.st_mode)) {
+        if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
             clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't run the CGI program");
             return;
         }
@@ -163,7 +171,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
 
     if(!strstr(uri, "cgi-bin")) { // uri에 cgi-bin과 일치하는 문자열이 없으면 //static content
         //strstr : 문자열 내에서 문자열로 검색하기 //strcpy : 문자열 복사 //strcat : 문자열 결합
-        strcpy(cgiargs, ""); 
+        strcpy(cgiargs, "");
         // cgiargs에 빈 문자열 저장(기존 CGI 인자 스트링 지우기)
         strcpy(filename, "."); // 아래 줄과 더불어 상대 리눅스 경로이름으로 변환(./index.html)
         strcat(filename, uri);
@@ -178,8 +186,8 @@ int parse_uri(char *uri, char *filename, char *cgiargs) {
             strcpy(cgiargs, ptr+1); // 포인터는 문자열 마지막으로 변경
             *ptr = '\0'; //uri 물음표 뒤 모두 제거
         }
-        else // 
-        strcpy(cgiargs, "");
+        else 
+            strcpy(cgiargs, "");
         strcpy(filename, ".");
         strcat(filename, uri);
         return 0;
@@ -242,11 +250,10 @@ void serve_static(int fd, char *filename, int filesize) {
     // 파일을 client에게 전송 -> 주소 srcp에서 시작하는 filesize 바이트를 클라이언트의 연결 식별자로 복사
     free(srcp); //할당한 메모리 free처리
     
-    
 }
 // response header에 들어갈 내용인 클라이언트가 요청한 파일의 타입을 확인
 // get_filetype - Derive file type from filename
-void get_filetype(char *filename, char *filetype) 
+void get_filetype(char *filename, char *filetype)
 {
     if (strstr(filename, ".html"))
         strcpy(filetype, "text/html");
@@ -316,6 +323,25 @@ void serve_dynamic(int fd, char *filename, char *cgiargs) {
     
     }
     Wait(NULL); //parent waits for and reaps child 자식프로세스가 종료되어 정리되기 기다림
+}
+
+void serve_head_method(int fd, char *filename, int filesize) {
+
+  char filetype[MAXLINE], buf[MAXBUF];
+
+  /* Send response headers to client */
+  // make header and save at 'buf'
+  get_filetype(filename, filetype);   // filename에서 filetype 추출해 저장
+  sprintf(buf, "HTTP/1.0 200 OK\r\n");
+  sprintf(buf, "%sServer: Tiny Web Server\r\n", buf);
+  sprintf(buf, "%sConnection: close\r\n", buf);
+  sprintf(buf, "%sContent-length: %d\r\n", buf, filesize);
+  sprintf(buf, "%sContent-type: %s\r\n\r\n", buf, filetype);
+  // write header to fd(send header to client)
+  Rio_writen(fd, buf, strlen(buf));
+  // print header in stdout(server)
+  printf("Response headers:\n");
+  printf("%s", buf);
 }
 
 void echo(int connfd) {

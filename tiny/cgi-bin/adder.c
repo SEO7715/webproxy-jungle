@@ -5,20 +5,29 @@
 #include "csapp.h"
 
 int main(void) {
-  char *buf, *p;
+  char *buf, *p, *method;
   char arg1[MAXLINE], arg2[MAXLINE], content[MAXLINE];
   int n1=0, n2=0;
 
   // extract the two arguments
   if((buf = getenv("QUERY_STRING")) != NULL) {
-    p = strchr(buf, "&");
+    p = strchr(buf, '&');
     // strchr 문자열 내 문자가 있는지 없는지 찾아보는 함수
     *p = '\0'; //uri & 뒤 모두 제거
-    strcpy(arg1, buf);
-    strcpy(arg2, p+1);
-    n1 = atoi(arg1);
-    n2 = atoi(arg2);
+
+    // buf = strchr(buf, '='); //""으로 하면 " \0"로 인식함 // ''으로 해주어야함
+    // p = strchr(p+1, '=');
+    // strcpy(arg1, buf+1); // '\0'으로 string 끝을 찾아서, 해당 string을 arg1에 복사
+    // strcpy(arg2, p+1);
+    // n1 = atoi(arg1); //
+    // n2 = atoi(arg2);
+
+    sscanf(buf, "first=%d", &n1);
+    sscanf(p+1, "second=%d", &n2);
+
   }
+
+  // method = getenv("REQUEST_METHOD");
 
   // make the response body
   sprintf(content, "QUERY_STRING=%s", buf);
