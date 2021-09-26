@@ -44,13 +44,13 @@ typedef struct {
     sem_t wmutex;     // 한번에 한 스레드만 writing할 수 있도록 보호조치(semaphore)
     sem_t rdcntmutex; // readCnt(현재 reader 수)를 조작할 때 한번에 한 스레드만 조작할 수 있도록 보호조치(semaphore)
 
-} cache_block;
+}cache_block;
 
 typedef struct {
     /* 캐시들을 관리하는 구조체: 캐시 10개 */
     cache_block cacheobjs[CACHE_OBJS_COUNT];  /*ten cache blocks*/
     int cache_num;
-} Cache;
+}Cache;
 
 Cache cache;
 
@@ -60,7 +60,7 @@ int main(int argc,char **argv)
     int listenfd,connfd;
     socklen_t  clientlen;
     char hostname[MAXLINE],port[MAXLINE];
-    pthread_t tid; //TID 저장 용도(unsigned long int)
+    pthread_t tid;
     struct sockaddr_storage clientaddr;/* generic sockaddr struct which is 28 Bytes.The same use as sockaddr */
 
     // 캐시 초기화
@@ -71,7 +71,7 @@ int main(int argc,char **argv)
         exit(1);
     }
 
-    // 무슨 코드..? --> 자식 프로세스 생성 안하니까 필요 없는거 아닌가..??
+    // Q. 무슨 코드..? --> 자식 프로세스 생성 안하니까 필요 없는거 아닌가..??
     Signal(SIGPIPE,SIG_IGN);
 
     // Open a listening socket
@@ -87,7 +87,7 @@ int main(int argc,char **argv)
 
         /* concurrent request using thread */
         // detatch mode, doit()
-        Pthread_create(&tid,NULL,thread,(void *)connfd); //thread함수 호출하는데, 인자로 connfd 넣음
+        Pthread_create(&tid,NULL,thread,(void *)connfd);
     }
     return 0;
 }
@@ -96,9 +96,9 @@ int main(int argc,char **argv)
 // 각 스레드마다 실질적인 doit() 함수 실행 --> 트랜잭션 처리
 void *thread(void *vargp){
     int connfd = (int)vargp;
-    Pthread_detach(pthread_self()); //detached thread로 만들어 주기 : 종료시 커널이 알아서 처리해줌(detached thread는 커널에서 자동으로 처리해줌 953p)
-    // 쓰레드는 pthread_detach 인자로 pthread_self()를 사용해서 자기자신을 분리할 수 있음
-    doit(connfd); 
+    // detach모드: 종료시 커널이 알아서 처리해줌?
+    Pthread_detach(pthread_self());
+    doit(connfd);
     Close(connfd);
 }
 
@@ -122,15 +122,12 @@ void doit(int connfd)
 
     char url_store[100];
     strcpy(url_store,uri);  /* store the original url */
-    // 왜 uri_store가 아니고 url_store인가..
-
     if(strcasecmp(method,"GET")){
         printf("Proxy does not implement the method");
         return;
     }
 
     /* check if the uri is cached */
-    // uri가 기존 캐시에 있드면, 
     int cache_index;
     if((cache_index=cache_find(url_store))!=-1){/*in cache then return the cache content*/
         // 이미 캐시에 존재하는 uri이면 저장된 정보 전송
@@ -340,11 +337,10 @@ int cache_find(char *url){
     for(i=0;i<CACHE_OBJS_COUNT;i++){
         // 캐시 읽을 때 보호조치: readerPre() ... reading ... readerAfter()
         readerPre(i);
-        if((cache.cacheobjs[i].isEmpty==0) && (strcmp(url, cache.cacheobjs[i].cache_url)==0)) break;
-        // i번째 캐시가 비어있지 않고(1이면 비어있음) 
+        if((cache.cacheobjs[i].isEmpty==0) && (strcmp(url,cache.cacheobjs[i].cache_url)==0)) break;
         readerAfter(i);
     }
-    if(i>=CACHE_OBJS_COUNT) return -1; /*cannot find url in the cache*/
+    if(i>=CACHE_OBJS_COUNT) return -1; /*can not find url in the cache*/
     return i;
 }
 
@@ -387,7 +383,7 @@ void cache_LRU(int index){
     i++;
     for(i; i<CACHE_OBJS_COUNT; i++)    {
         writePre(i);
-        if(cache.cacheobjs[i].isEmpty==0){
+        if(cache.cacheobjs[i].isEmpty==0 && i!=index){
             cache.cacheobjs[i].LRU--;
         }
         writeAfter(i);
@@ -402,7 +398,7 @@ void cache_uri(char *uri,char *buf){
 
     writePre(i);/*writer P*/
 
-    strcpy(cache.cacheobjs[i].cache_obj,buf);
+    strcpy(cache.cacheobjs[i].cache_obj,buf); 
     strcpy(cache.cacheobjs[i].cache_url,uri);
     cache.cacheobjs[i].isEmpty = 0;
     cache.cacheobjs[i].LRU = LRU_MAGIC_NUMBER;
